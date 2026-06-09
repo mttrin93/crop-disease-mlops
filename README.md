@@ -73,7 +73,7 @@ CI/CD: **GitHub Actions** (CI on PR, CD on merge to develop)
 
 ## Dataset
 
-**PlantVillage** — `huggan/plantvillage` on HuggingFace
+**PlantVillage** — `TSY-0408/PlantVillage` on HuggingFace
 
 - 87,000 images across 38 disease classes
 - 14 crop species (tomato, potato, apple, corn, grape, and more)
@@ -88,8 +88,7 @@ CI/CD: **GitHub Actions** (CI on PR, CD on merge to develop)
 crop-disease-mlops/
 ├── src/
 │   ├── data/
-│   │   ├── download.py          # download PlantVillage from HuggingFace → S3
-│   │   └── preprocess.py        # resize, augment, train/val/test split
+│   │   └── preprocess.py        # resize, augment, train/val/test split → S3
 │   ├── model/
 │   │   ├── train.py             # EfficientNet-B0 fine-tuning + MLflow logging
 │   │   └── evaluate.py          # F1, accuracy, confusion matrix
