@@ -1,0 +1,64 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Data (download via scripts, never commit raw data)
+data/raw/
+data/processed/
+*.parquet
+*.csv
+
+# Models
+*.onnx
+*.pkl
+*.pt
+*.pth
+models/
+
+# Terraform
+infrastructure/.terraform/
+infrastructure/.terraform.lock.hcl
+infrastructure/*.tfstate
+infrastructure/*.tfstate.backup
+infrastructure/terraform.tfvars
+!infrastructure/terraform.tfvars.example
+
+# Docker
+.dockerignore
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Airflow
+airflow/logs/
+airflow/plugins/
+airflow/dags/__pycache__/
+
+# Monitoring
+monitoring/grafana_data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/

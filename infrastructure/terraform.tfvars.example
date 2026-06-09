@@ -1,0 +1,14 @@
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored — never commit secrets.
+
+aws_region   = "eu-west-1"
+project_id   = "crop-disease-mlops"
+environment  = "stg"
+model_bucket = "crop-disease-models"
+
+# Filled in after first training run
+run_id = ""
+
+# Paths to local source files (for null_resource Docker build)
+lambda_function_local_path = "../api/main.py"
+docker_image_local_path    = "../api/Dockerfile"

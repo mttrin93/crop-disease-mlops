@@ -1,0 +1,101 @@
+name: CD Deploy
+
+on:
+  push:
+    branches:
+      - develop
+
+env:
+  AWS_DEFAULT_REGION: eu-west-1
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform init + apply
+        id: tf-apply
+        working-directory: infrastructure
+        run: |
+          terraform init
+          terraform apply -auto-approve
+          echo "model_bucket=$(terraform output -raw model_bucket)" >> $GITHUB_OUTPUT
+          echo "ecr_repo=$(terraform output -raw ecr_repo)" >> $GITHUB_OUTPUT
+          echo "lambda_function=$(terraform output -raw lambda_function)" >> $GITHUB_OUTPUT
+          echo "api_endpoint=$(terraform output -raw api_endpoint)" >> $GITHUB_OUTPUT
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ steps.tf-apply.outputs.ecr_repo }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f api/Dockerfile .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Get RUN_ID from MLflow Registry
+        id: get-run-id
+        run: |
+          RUN_ID=$(aws ssm get-parameter \
+            --name '/crop-disease-mlops/staging/run_id' \
+            --query 'Parameter.Value' --output text)
+          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+
+      - name: Update Lambda
+        env:
+          LAMBDA_FUNCTION: ${{ steps.tf-apply.outputs.lambda_function }}
+          MODEL_BUCKET: ${{ steps.tf-apply.outputs.model_bucket }}
+          RUN_ID: ${{ steps.get-run-id.outputs.run_id }}
+        run: |
+          STATE=$(aws lambda get-function \
+            --function-name $LAMBDA_FUNCTION \
+            --query 'Configuration.LastUpdateStatus' --output text)
+          while [[ "$STATE" == "InProgress" ]]; do
+            sleep 5s
+            STATE=$(aws lambda get-function \
+              --function-name $LAMBDA_FUNCTION \
+              --query 'Configuration.LastUpdateStatus' --output text)
+          done
+          aws lambda update-function-code \
+            --function-name $LAMBDA_FUNCTION \
+            --image-uri ${{ steps.build-image.outputs.image_uri }}
+          aws lambda update-function-configuration \
+            --function-name $LAMBDA_FUNCTION \
+            --environment "Variables={MODEL_BUCKET=$MODEL_BUCKET,RUN_ID=$RUN_ID}"
+
+      - name: Integration test
+        working-directory: tests/integration
+        env:
+          API_ENDPOINT: ${{ steps.tf-apply.outputs.api_endpoint }}
+        run: . run.sh
