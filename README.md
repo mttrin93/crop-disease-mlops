@@ -247,7 +247,7 @@ Access the Grafana dashboard at `http://localhost:3000` (local) or your EC2 Graf
 
 ---
 
-## MLflow Evaluation Criteria Coverage
+## Evaluation Criteria Coverage
 
 | Criterion | Implementation | Score |
 |---|---|---|
