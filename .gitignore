@@ -18,6 +18,7 @@ build/
 # MLflow
 mlruns/
 mlartifacts/
+*.pem
 
 # Data (download via scripts, never commit raw data)
 data/raw/
