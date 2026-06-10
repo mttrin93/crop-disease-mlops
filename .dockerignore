@@ -1,0 +1,34 @@
+# data — never needed in the container
+data/
+
+# model artifacts
+models/
+*.onnx
+*.pt
+*.pth
+
+# dev and non-api code
+notebooks/
+tests/
+airflow/
+monitoring/
+infrastructure/
+src/
+
+# Python artifacts
+.venv/
+__pycache__/
+*.pyc
+*.pyb
+.pytest_cache/
+mlruns/
+mlartifacts/
+
+# secrets and config
+.env
+.env.*
+*.pem
+
+# git
+.git/
+.gitignore

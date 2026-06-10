@@ -51,7 +51,7 @@ https://github.com/DataTalksClub/mlops-zoomcamp/blob/main/02-experiment-tracking
   **Set up EC2 connection** (this automatically configures the security
   group rules between RDS and EC2 — no manual inbound rule editing needed)
 
-**S3 bucket:** this is not the S3 bucket created in Step 1 — create a new bucket for the
+**S3 bucket:** you can use the S3 bucket created in Step 1 or create a separate one for the
 MLflow artifact store.
 
 ---
@@ -144,8 +144,8 @@ Terraform deployment.
 In the last notebook cell (or directly in the MLflow UI):
 
 1. Go to `http://your-ec2-dns:5000` → **Models** → `crop-disease-efficientnet-b0`
-2. Click the latest version → **Stage** → **Staging**
-3. After validating metrics → **Stage** → **Production**
+2. Click the latest version and add alias → **Staging**
+3. After validating metrics change alias to → **Production**
 
 Then store the RUN_ID for the deployment pipeline:
 ```bash

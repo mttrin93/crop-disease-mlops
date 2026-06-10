@@ -18,6 +18,8 @@ dependencies = [
     "psycopg2-binary>=2.9.9",
     "python-dotenv>=1.0.1",
     "requests>=2.32.0",
+    "mangum>=0.21.0",
+    "python-multipart>=0.0.32",
 ]
 
 [dependency-groups]

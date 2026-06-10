@@ -42,7 +42,7 @@ infrastructure/terraform.tfvars
 !infrastructure/terraform.tfvars.example
 
 # Docker
-.dockerignore
+#.dockerignore
 
 # Jupyter
 .ipynb_checkpoints/
