@@ -78,13 +78,21 @@ docker run -p 8000:8000 \
     -v ~/.aws:/root/.aws:ro \
     -e RUN_ID=your_run_id \
     -e MLFLOW_TRACKING_URI=http://your-ec2:5000 \
-    -e MONITORING_DB_URL=postgresql://postgres:example@localhost:5432/monitoring \
+    -e MONITORING_DB_URL=postgresql://POSTGRES_USER:POSTGRES_PASSWORD@localhost:5432/POSTGRES_DB \
     --network host \
     crop-disease-inference:latest \
     api.main:app --host 0.0.0.0 --port 8000
 ```
 
-Predictions are written to the `predictions` table silently — the API
+where you can find POSTGRES_USER, POSTGRES_PASSWORD and POSTGRES_DB in the docker-compose file.
+You can send a predict request with the command:
+
+```bash
+curl -X POST http://localhost:8000/predict \
+    -F "file=@data/processed/test/Tomato___healthy/000000.jpg"
+```
+
+Predictions are then written to the `predictions` table silently — the API
 continues normally even if the DB is unreachable.
 
 ---
@@ -110,11 +118,16 @@ python src/monitoring/drift.py --skip-db
 
 Full run against real DB (reads last 7 days of predictions):
 ```bash
-MONITORING_DB_HOST=localhost \
-MONITORING_DB_PASSWORD=example \
+MONITORING_DB_HOST=localhost   \
+MONITORING_DB_PORT=5432   \
+MONITORING_DB_NAME=monitoring \
+MONITORING_DB_USER=postgres    \
+MONITORING_DB_PASSWORD=example  \
 MODEL_BUCKET=crop-disease-models-stg-478544568263 \
 python src/monitoring/drift.py --window-days 7
 ```
+where all the monitoring environment variables should match with what you set in Step 1 and 2
+(localhost, port 5432, POSTGRES_USER, POSTGRES_PASSWORD and POSTGRES_DB)
 
 Or via the Airflow scheduler (runs automatically every day at 6am):
 ```bash

@@ -73,6 +73,34 @@ def _log_prediction_to_db(result: dict) -> None:
         logger.warning("Prediction logging failed (non-fatal): %s", exc)
 
 
+def _ensure_predictions_table() -> None:
+    """Create predictions table if it doesn't exist."""
+    if not MONITORING_DB_URL:
+        return
+    try:
+        conn = psycopg2.connect(MONITORING_DB_URL)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS predictions (
+                        id             SERIAL PRIMARY KEY,
+                        timestamp      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                        predicted_class VARCHAR(100),
+                        confidence     FLOAT,
+                        entropy        FLOAT,
+                        run_id         VARCHAR(100)
+                    )
+                """
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        logger.info("Predictions table ready")
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("Could not create predictions table: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):  # pylint: disable=redefined-outer-name
     """Load the model at startup."""
@@ -131,6 +159,7 @@ async def predict(file: UploadFile = File(...)) -> JSONResponse:
         raise HTTPException(status_code=422, detail="Empty file received")
 
     result = MODEL_SERVICE.predict(image_bytes)
+    _ensure_predictions_table()
     _log_prediction_to_db(result)
     return JSONResponse(content=result)
 
