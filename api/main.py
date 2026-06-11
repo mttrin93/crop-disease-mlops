@@ -8,11 +8,18 @@ Works in two deployment modes:
 Endpoints:
   GET  /health   → service status + model info
   POST /predict  → multipart image upload → disease class + confidence
+
+Monitoring:
+  Set MONITORING_DB_URL=postgresql://user:pass@host/dbname to enable
+  prediction logging to PostgreSQL for Evidently drift monitoring.
 """
 
+import os
 import logging
 from contextlib import asynccontextmanager
 
+import numpy as np
+import psycopg2
 from mangum import Mangum  # pylint: disable=import-error
 from fastapi import File, FastAPI, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
@@ -27,6 +34,43 @@ logger = logging.getLogger(__name__)
 
 # module-level singleton — loaded once at cold start, reused across requests
 MODEL_SERVICE: ModelService | None = None
+
+# monitoring DB connection — optional, enabled by MONITORING_DB_URL env var
+MONITORING_DB_URL = os.getenv("MONITORING_DB_URL")
+
+
+def _log_prediction_to_db(result: dict) -> None:
+    """
+    Write prediction to PostgreSQL for drift monitoring.
+    Silent no-op if MONITORING_DB_URL is not set or DB is unreachable.
+    """
+    if not MONITORING_DB_URL:
+        return
+    try:
+        # compute entropy from top_k probabilities
+        probs = np.array([item["confidence"] for item in result["top_k"]])
+        probs = probs / probs.sum()
+        entropy = float(-np.sum(probs * np.log(probs + 1e-9)))
+
+        conn = psycopg2.connect(MONITORING_DB_URL)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO predictions
+                    (predicted_class, confidence, entropy, run_id)
+                VALUES (%s, %s, %s, %s)
+            """,
+                (
+                    result["class_name"],
+                    result["confidence"],
+                    entropy,
+                    result["run_id"],
+                ),
+            )
+        conn.commit()
+        conn.close()
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("Prediction logging failed (non-fatal): %s", exc)
 
 
 @asynccontextmanager
@@ -87,6 +131,7 @@ async def predict(file: UploadFile = File(...)) -> JSONResponse:
         raise HTTPException(status_code=422, detail="Empty file received")
 
     result = MODEL_SERVICE.predict(image_bytes)
+    _log_prediction_to_db(result)
     return JSONResponse(content=result)
 
 

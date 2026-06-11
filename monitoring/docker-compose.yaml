@@ -1,0 +1,53 @@
+# Crop Disease Detection — Monitoring Stack
+# Starts PostgreSQL (metrics store) + Grafana (dashboard)
+#
+# Start with: docker compose -f monitoring/docker-compose.yaml up
+# Grafana UI:  http://localhost:3000 (admin / admin)
+# Adminer UI:  http://localhost:8080
+
+#version: '3.7'
+
+volumes:
+  grafana_data: {}
+
+networks:
+  front-tier:
+  back-tier:
+
+services:
+
+  db:
+    image: postgres:13
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: example
+      POSTGRES_DB: monitoring
+    ports:
+      - "5432:5432"
+    networks:
+      - back-tier
+
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - "8080:8080"
+    networks:
+      - back-tier
+      - front-tier
+
+  grafana:
+    image: grafana/grafana-enterprise
+    user: "472"
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config/grafana_datasources.yaml:/etc/grafana/provisioning/datasources/datasource.yaml:ro
+      - ./config/grafana_dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml:ro
+      - ./dashboards:/opt/grafana/dashboards
+      - grafana_data:/var/lib/grafana
+    networks:
+      - back-tier
+      - front-tier

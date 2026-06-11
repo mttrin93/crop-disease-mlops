@@ -1,0 +1,218 @@
+{
+  "__inputs": [],
+  "__requires": [
+    {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "9.0.0"},
+    {"type": "datasource", "id": "postgres", "name": "PostgreSQL", "version": "1.0.0"}
+  ],
+  "annotations": {"list": []},
+  "description": "Crop Disease Detection — Model Drift Monitoring",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.10},
+              {"color": "red", "value": 0.15}
+            ]
+          },
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "title": "Latest Prediction Drift Score",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+          "rawSql": "SELECT prediction_drift FROM drift_metrics ORDER BY timestamp DESC LIMIT 1",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 3},
+              {"color": "red", "value": 5}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "title": "Drifted Feature Columns",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+          "rawSql": "SELECT num_drifted_columns FROM drift_metrics ORDER BY timestamp DESC LIMIT 1",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.03},
+              {"color": "red", "value": 0.05}
+            ]
+          },
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "title": "Missing Values Share",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+          "rawSql": "SELECT share_missing_values FROM drift_metrics ORDER BY timestamp DESC LIMIT 1",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"lineWidth": 2, "fillOpacity": 10}
+        }
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 5},
+      "id": 4,
+      "options": {"tooltip": {"mode": "multi"}},
+      "title": "Prediction Drift Score Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+          "rawSql": "SELECT timestamp AS time, prediction_drift AS \"Drift Score\" FROM drift_metrics WHERE $__timeFilter(timestamp) ORDER BY timestamp",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"lineWidth": 2, "fillOpacity": 10}
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+      "id": 5,
+      "title": "Drifted Columns Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+          "rawSql": "SELECT timestamp AS time, num_drifted_columns AS \"Drifted Columns\" FROM drift_metrics WHERE $__timeFilter(timestamp) ORDER BY timestamp",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"lineWidth": 2, "fillOpacity": 10}
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+      "id": 6,
+      "title": "Average Confidence Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+          "rawSql": "SELECT DATE_TRUNC('hour', timestamp) AS time, AVG(confidence) AS \"Avg Confidence\" FROM predictions WHERE $__timeFilter(timestamp) GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 21},
+      "id": 7,
+      "options": {"pieType": "pie", "displayLabels": ["name", "percent"]},
+      "title": "Predicted Class Distribution (last 7 days)",
+      "type": "piechart",
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+          "rawSql": "SELECT predicted_class AS metric, COUNT(*) AS value FROM predictions WHERE timestamp >= NOW() - INTERVAL '7 days' GROUP BY predicted_class ORDER BY value DESC LIMIT 10",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"lineWidth": 2}
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 21},
+      "id": 8,
+      "title": "Prediction Volume Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "PostgreSQL"},
+          "rawSql": "SELECT DATE_TRUNC('hour', timestamp) AS time, COUNT(*) AS \"Predictions\" FROM predictions WHERE $__timeFilter(timestamp) GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 36,
+  "style": "dark",
+  "tags": ["mlops", "monitoring", "crop-disease"],
+  "time": {"from": "now-7d", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Crop Disease Detection — Model Monitoring",
+  "uid": "crop-disease-monitoring",
+  "version": 1
+}
