@@ -1,0 +1,72 @@
+# Airflow local development stack
+# Start with: docker compose -f airflow/docker-compose.yaml up
+# Access UI at: http://localhost:8081 (admin / admin)
+
+#version: '3.8'
+
+x-airflow-common:
+  &airflow-common
+  image: apache/airflow:2.9.0
+  user: "${AIRFLOW_UID:-50000}:0"
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__WEBSERVER__SECRET_KEY: 'crop-disease-mlops-secret'
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+    # project env vars — override in production with real values
+    MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://localhost:5000}
+    MODEL_BUCKET: ${MODEL_BUCKET:-crop-disease-models-stg-478544568263}
+    AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ../src:/opt/airflow/src         # training + monitoring scripts
+    - ~/.aws:/root/.aws:ro            # AWS credentials
+    - ../data:/opt/airflow/data       # bind mount for the data
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+
+  airflow-init:
+    <<: *airflow-common
+    command: bash -c "pip install mlflow boto3 scikit-learn evidently psycopg2-binary && airflow db migrate && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com"
+    restart: on-failure
+
+  airflow-webserver:
+    <<: *airflow-common
+    #command: webserver
+    command: bash -c "pip install mlflow boto3 scikit-learn evidently psycopg2-binary && airflow webserver"
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      retries: 5
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    #command: scheduler
+    command: bash -c "pip install mlflow boto3 scikit-learn evidently psycopg2-binary && airflow scheduler"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

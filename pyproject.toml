@@ -49,7 +49,7 @@ profile = "black"
 
 [tool.pylint.main]
 ignore = [".venv", "__pycache__", "notebooks", "infrastructure", "airflow"]
-disable = ["C0114", "C0115", "C0116"]
+disable = ["C0114", "C0115", "C0116", "C0412"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
