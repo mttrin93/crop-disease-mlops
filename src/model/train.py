@@ -17,6 +17,7 @@ Prints the RUN_ID to stdout on completion so Airflow can capture it
 via XCom and keep SSM in sync automatically.
 """
 
+import io
 import os
 import json
 import time
@@ -25,8 +26,11 @@ import argparse
 from pathlib import Path
 
 import onnx  # pylint: disable=import-error
+import boto3
+import numpy as np
 import torch
 import mlflow
+import pandas as pd
 import mlflow.onnx
 import mlflow.pytorch
 from torch import nn, optim
@@ -178,6 +182,70 @@ def export_onnx(model: nn.Module, output_path: str) -> None:
     logger.info("ONNX model exported → %s", output_path)
 
 
+# ---------- reference data for monitoring ----------
+
+
+def generate_reference_data(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    model: nn.Module,
+    test_loader: DataLoader,
+    class_names: list[str],
+    output_dir: Path,
+    model_bucket: str | None = None,
+    s3_key: str = "monitoring/reference_predictions.parquet",
+) -> None:
+    """
+    Run the trained model on the full test set and save the prediction
+    distribution to S3 as a Parquet file.
+
+    This becomes the REFERENCE DATA for Evidently drift monitoring.
+    Every day, recent API predictions are compared against this baseline
+    to detect distribution shift.
+
+    Columns saved:
+        predicted_class  — top-1 predicted class name
+        confidence       — top-1 softmax probability
+        entropy          — prediction entropy (uncertainty measure)
+    """
+    model.eval()
+    records = []
+
+    with torch.no_grad():
+        for images, _ in test_loader:
+            probs_batch = torch.softmax(model(images.to(DEVICE)), dim=1).cpu().numpy()
+            for probs in probs_batch:
+                top_idx = int(probs.argmax())
+                entropy = float(-np.sum(probs * np.log(probs + 1e-9)))
+                records.append(
+                    {
+                        "predicted_class": class_names[top_idx],
+                        "confidence": float(probs[top_idx]),
+                        "entropy": entropy,
+                    }
+                )
+
+    reference_df = pd.DataFrame(records)
+    logger.info(
+        "Reference data: %d predictions, %d unique classes",
+        len(reference_df),
+        reference_df["predicted_class"].nunique(),
+    )
+
+    local_path = output_dir / "reference_predictions.parquet"
+    reference_df.to_parquet(local_path, index=False)
+    mlflow.log_artifact(str(local_path), artifact_path="monitoring")
+
+    if model_bucket:
+        buf = io.BytesIO()
+        reference_df.to_parquet(buf, index=False)
+        buf.seek(0)
+        boto3.client("s3").put_object(
+            Bucket=model_bucket,
+            Key=s3_key,
+            Body=buf.getvalue(),
+        )
+        logger.info("Reference data uploaded to s3://%s/%s", model_bucket, s3_key)
+
+
 # ---------- training loop helpers ----------
 
 
@@ -201,7 +269,7 @@ class _EpochContext:  # pylint: disable=too-few-public-methods
         self.scheduler = scheduler
 
 
-class _ArtifactContext:  # pylint: disable=too-few-public-methods
+class _ArtifactContext:  # pylint: disable=too-few-public-methods,too-many-instance-attributes
     """Groups artifact paths and identifiers for final logging."""
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -212,6 +280,8 @@ class _ArtifactContext:  # pylint: disable=too-few-public-methods
         output_dir: Path,
         best_ckpt: str,
         model_name: str,
+        class_names: list[str] | None = None,
+        model_bucket: str | None = None,
     ) -> None:
         self.test_loader = test_loader
         self.criterion = criterion
@@ -219,6 +289,8 @@ class _ArtifactContext:  # pylint: disable=too-few-public-methods
         self.output_dir = output_dir
         self.best_ckpt = best_ckpt
         self.model_name = model_name
+        self.class_names = class_names or []
+        self.model_bucket = model_bucket
 
 
 def _make_optimizer(
@@ -296,6 +368,16 @@ def _log_and_register(model: nn.Module, ctx: _ArtifactContext) -> None:
         registered_model_name=ctx.model_name,
     )
 
+    # generate and upload reference data for Evidently monitoring
+    if ctx.class_names:
+        generate_reference_data(
+            model=model,
+            test_loader=ctx.test_loader,
+            class_names=ctx.class_names,
+            output_dir=ctx.output_dir,
+            model_bucket=ctx.model_bucket,
+        )
+
 
 def _run_training_loop(
     model: nn.Module,
@@ -367,6 +449,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--output-dir", type=str, default="/tmp/crop_disease_model")
+    parser.add_argument(
+        "--model-bucket",
+        type=str,
+        default=os.getenv("MODEL_BUCKET"),
+        help="S3 bucket for uploading reference data (optional)",
+    )
     return parser.parse_args()
 
 
@@ -416,7 +504,14 @@ def main() -> None:  # pylint: disable=too-many-locals
             _make_scheduler(optimizer),
         )
         artifact_ctx = _ArtifactContext(
-            test_loader, criterion, data_dir, output_dir, best_ckpt, args.model_name
+            test_loader=test_loader,
+            criterion=criterion,
+            data_dir=data_dir,
+            output_dir=output_dir,
+            best_ckpt=best_ckpt,
+            model_name=args.model_name,
+            class_names=metadata["class_names"],
+            model_bucket=args.model_bucket,
         )
         _run_training_loop(
             model, epoch_ctx, artifact_ctx, args.epochs, args.early_stop_patience
