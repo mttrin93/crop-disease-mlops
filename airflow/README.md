@@ -60,10 +60,10 @@ Copy `.env.example` to `.env` in the project root and fill in your values,
 or export them in your shell before starting Airflow:
 
 ```bash
-export MLFLOW_TRACKING_URI=http://ec2-52-211-42-124.eu-west-1.compute.amazonaws.com:5000
-export MODEL_BUCKET=crop-disease-models-stg-478544568263
-export AWS_DEFAULT_REGION=eu-west-1
-export LAMBDA_FUNCTION=crop-disease-predict_mlops-zoomcamp
+export MLFLOW_TRACKING_URI=...
+export MODEL_BUCKET=...
+export AWS_DEFAULT_REGION=...
+export LAMBDA_FUNCTION=...
 ```
 
 ### 4. Initialise the database (first time only)
