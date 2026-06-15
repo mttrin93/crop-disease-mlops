@@ -1,101 +1,157 @@
-name: CD Deploy
+# ──────────────────────────────────────────────────────────────────────────────
+# CD — runs on push to develop when api/ changes
+#
+# Steps:
+#   1. Build Docker image and push to ECR (tagged :sha-XXXXXXX and :latest)
+#   2. Update Lambda function code with new image
+#   3. Fetch active RUN_ID from SSM and update Lambda env vars
+#   4. Wait for Lambda update to complete
+#   5. Run integration tests against the live API endpoint
+#
+# Required GitHub secrets:
+#   AWS_ACCESS_KEY_ID
+#   AWS_SECRET_ACCESS_KEY
+#
+# Required GitHub variables (Settings → Variables → Actions):
+#   AWS_REGION             — eu-west-1
+#   ECR_REPO_URL           — 478544568263.dkr.ecr.eu-west-1.amazonaws.com/crop-disease-inference_crop-disease-mlops
+#   LAMBDA_FUNCTION        — crop-disease-predict_crop-disease-mlops
+#   API_URL                — https://bf17kc4e1b.execute-api.eu-west-1.amazonaws.com
+#   MODEL_BUCKET           — crop-disease-models-mlflow-stg-478544568263
+#   SSM_PARAMETER_NAME     — /crop-disease-mlops/staging/run_id
+#
+# Note: Terraform is NOT run in CD to avoid accidental resource changes.
+# Infrastructure changes are applied manually via `terraform apply` or
+# triggered separately. See infrastructure/README.md.
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: CD
 
 on:
   push:
-    branches:
-      - develop
+    branches: [develop]
+    paths:
+      - "api/**"
+      - ".github/workflows/cd.yaml"
 
-env:
-  AWS_DEFAULT_REGION: eu-west-1
-  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
+# GitHub environment with optional protection rules (manual approval, reviewers)
+# Configure at: Settings → Environments → staging
 jobs:
+
   deploy:
+    name: Build → Push ECR → Update Lambda → Integration Test
     runs-on: ubuntu-latest
     environment: staging
 
     steps:
+
+      # ── checkout ─────────────────────────────────────────────────────────────
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: uv sync --dev
-
+      # ── AWS credentials ───────────────────────────────────────────────────────
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-west-1
+          aws-region:            ${{ vars.AWS_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_wrapper: false
-
-      - name: Terraform init + apply
-        id: tf-apply
-        working-directory: infrastructure
-        run: |
-          terraform init
-          terraform apply -auto-approve
-          echo "model_bucket=$(terraform output -raw model_bucket)" >> $GITHUB_OUTPUT
-          echo "ecr_repo=$(terraform output -raw ecr_repo)" >> $GITHUB_OUTPUT
-          echo "lambda_function=$(terraform output -raw lambda_function)" >> $GITHUB_OUTPUT
-          echo "api_endpoint=$(terraform output -raw api_endpoint)" >> $GITHUB_OUTPUT
-
+      # ── ECR login ─────────────────────────────────────────────────────────────
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push Docker image
+      # ── build and push ────────────────────────────────────────────────────────
+      - name: Build Docker image
         id: build-image
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ steps.tf-apply.outputs.ecr_repo }}
-          IMAGE_TAG: ${{ github.sha }}
+          ECR_REGISTRY:   ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPO_URL }}
+          IMAGE_TAG:      ${{ github.sha }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f api/Dockerfile .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          docker build \
+            -t ${{ vars.ECR_REPO_URL }}:${IMAGE_TAG::7} \
+            -t ${{ vars.ECR_REPO_URL }}:latest \
+            -f api/Dockerfile .
+          echo "image_uri=${{ vars.ECR_REPO_URL }}:${IMAGE_TAG::7}" >> $GITHUB_OUTPUT
 
-      - name: Get RUN_ID from MLflow Registry
+      - name: Push image to ECR
+        run: |
+          docker push ${{ vars.ECR_REPO_URL }}:${{ github.sha::7 }}
+          docker push ${{ vars.ECR_REPO_URL }}:latest
+
+      # ── update Lambda code ────────────────────────────────────────────────────
+      - name: Update Lambda function code
+        run: |
+          # wait if Lambda is already updating
+          STATE=$(aws lambda get-function \
+            --function-name ${{ vars.LAMBDA_FUNCTION }} \
+            --query 'Configuration.LastUpdateStatus' --output text)
+          while [[ "$STATE" == "InProgress" ]]; do
+            echo "Lambda update in progress, waiting..."
+            sleep 5
+            STATE=$(aws lambda get-function \
+              --function-name ${{ vars.LAMBDA_FUNCTION }} \
+              --query 'Configuration.LastUpdateStatus' --output text)
+          done
+
+          aws lambda update-function-code \
+            --function-name ${{ vars.LAMBDA_FUNCTION }} \
+            --image-uri ${{ steps.build-image.outputs.image_uri }}
+
+      # ── get active RUN_ID from SSM ────────────────────────────────────────────
+      - name: Get RUN_ID from SSM
         id: get-run-id
         run: |
           RUN_ID=$(aws ssm get-parameter \
-            --name '/crop-disease-mlops/staging/run_id' \
+            --name '${{ vars.SSM_PARAMETER_NAME }}' \
             --query 'Parameter.Value' --output text)
-          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+          echo "run_id=${RUN_ID}" >> $GITHUB_OUTPUT
+          echo "Active RUN_ID: ${RUN_ID}"
 
-      - name: Update Lambda
-        env:
-          LAMBDA_FUNCTION: ${{ steps.tf-apply.outputs.lambda_function }}
-          MODEL_BUCKET: ${{ steps.tf-apply.outputs.model_bucket }}
-          RUN_ID: ${{ steps.get-run-id.outputs.run_id }}
+      # ── update Lambda env vars with active RUN_ID ─────────────────────────────
+      - name: Update Lambda configuration
         run: |
-          STATE=$(aws lambda get-function \
-            --function-name $LAMBDA_FUNCTION \
-            --query 'Configuration.LastUpdateStatus' --output text)
-          while [[ "$STATE" == "InProgress" ]]; do
-            sleep 5s
-            STATE=$(aws lambda get-function \
-              --function-name $LAMBDA_FUNCTION \
-              --query 'Configuration.LastUpdateStatus' --output text)
-          done
-          aws lambda update-function-code \
-            --function-name $LAMBDA_FUNCTION \
-            --image-uri ${{ steps.build-image.outputs.image_uri }}
-          aws lambda update-function-configuration \
-            --function-name $LAMBDA_FUNCTION \
-            --environment "Variables={MODEL_BUCKET=$MODEL_BUCKET,RUN_ID=$RUN_ID}"
+          aws lambda wait function-updated \
+            --function-name ${{ vars.LAMBDA_FUNCTION }}
 
-      - name: Integration test
-        working-directory: tests/integration
+          aws lambda update-function-configuration \
+            --function-name ${{ vars.LAMBDA_FUNCTION }} \
+            --environment "Variables={
+              MODEL_BUCKET=${{ vars.MODEL_BUCKET }},
+              RUN_ID=${{ steps.get-run-id.outputs.run_id }},
+              MLFLOW_EXPERIMENT_ID=1
+            }"
+
+      # ── wait for final update ─────────────────────────────────────────────────
+      - name: Wait for Lambda to be ready
+        run: |
+          aws lambda wait function-updated \
+            --function-name ${{ vars.LAMBDA_FUNCTION }}
+          echo "Lambda is ready"
+
+      # ── integration tests against live API ────────────────────────────────────
+      - name: Install test dependencies
+        run: pip install pytest requests pillow
+
+      - name: Run integration tests
         env:
-          API_ENDPOINT: ${{ steps.tf-apply.outputs.api_endpoint }}
-        run: . run.sh
+          API_URL: ${{ vars.API_URL }}
+        run: |
+          # wait for cold start
+          sleep 10
+          pytest tests/integration/test_api.py -v --tb=short
+
+      # ── deployment summary ────────────────────────────────────────────────────
+      - name: Deployment summary
+        if: success()
+        run: |
+          echo "### Deployment successful ✓" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Image tag | \`${GITHUB_SHA::7}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Lambda | \`${{ vars.LAMBDA_FUNCTION }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| RUN_ID | \`${{ steps.get-run-id.outputs.run_id }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| API | ${{ vars.API_URL }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${GITHUB_SHA::7}\` |" >> $GITHUB_STEP_SUMMARY

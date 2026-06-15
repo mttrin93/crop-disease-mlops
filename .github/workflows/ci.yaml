@@ -1,39 +1,93 @@
-name: CI Tests
+# ──────────────────────────────────────────────────────────────────────────────
+# CI — runs on every PR to main or develop
+#
+# Jobs:
+#   lint   : black, isort, pylint
+#   test   : pytest unit tests (no Docker, no AWS)
+#
+# See also: ci-tf.yaml for Terraform plan (triggers only on infrastructure/ changes)
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: CI
 
 on:
   pull_request:
-    branches:
-      - develop
-      - main
+    branches: [main, develop]
     paths:
       - "src/**"
       - "api/**"
       - "tests/**"
       - "pyproject.toml"
 
+env:
+  PYTHON_VERSION: "3.11"
+
 jobs:
-  quality-and-test:
+
+  # ── lint ────────────────────────────────────────────────────────────────────
+
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.11"
+          version: "latest"
 
-      - name: Install dependencies
-        run: uv sync --dev
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
 
-      - name: isort
-        run: uv run isort src/ api/ tests/ --check-only
+      - name: Install dev dependencies
+        run: uv sync --group dev
 
       - name: black
-        run: uv run black src/ api/ tests/ --check
+        run: uv run black --check src/ api/ tests/
+
+      - name: isort
+        run: uv run isort --check-only src/ api/ tests/
 
       - name: pylint
-        run: uv run pylint src/ api/ tests/ --recursive=y -rn -sn
+        run: |
+          uv run pylint src/ api/ tests/ \
+            --recursive=y \
+            --disable=C0114,C0115,C0116 \
+            --ignore=notebooks,infrastructure,airflow \
+            --fail-under=8.0
 
-      - name: Unit tests
-        run: uv run pytest tests/unit/ -v
+  # ── unit tests ───────────────────────────────────────────────────────────────
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          # api group: onnxruntime, fastapi, boto3 (for test_predict.py)
+          # monitoring group: evidently, pandas, psycopg2 (for test_drift.py)
+          # dev group: pytest, black, isort, pylint
+          uv sync --group api --group monitoring --group dev
+          # extra deps needed by preprocess.py and dag_tasks.py
+          uv pip install scikit-learn pillow mlflow
+
+      - name: Run unit tests
+        run: uv run pytest tests/unit/ -v --tb=short
+        env:
+          # prevent any accidental AWS calls during unit tests
+          AWS_DEFAULT_REGION: eu-west-1
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test

@@ -1,0 +1,86 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# CI Terraform — runs on PRs that touch infrastructure/
+#
+# Only triggers when infrastructure files change — avoids unnecessary AWS calls
+# on every PR. Validates that Terraform config is correct and shows the plan
+# as a PR summary so reviewers can see what would change.
+#
+# Required GitHub secrets:
+#   AWS_ACCESS_KEY_ID
+#   AWS_SECRET_ACCESS_KEY
+#   RUN_ID                  — current active MLflow run ID
+#
+# Required GitHub variables:
+#   AWS_REGION
+#   MLFLOW_TRACKING_URI
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: CI — Terraform
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "infrastructure/**"   # only triggers when infra files change
+
+defaults:
+  run:
+    working-directory: infrastructure
+
+jobs:
+
+  tf-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ── checkout ─────────────────────────────────────────────────────────────
+      - uses: actions/checkout@v4
+
+      # ── AWS credentials ───────────────────────────────────────────────────────
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ vars.AWS_REGION }}
+
+      # ── Terraform setup ───────────────────────────────────────────────────────
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.0"
+
+      - name: Terraform init
+        run: terraform init
+
+      # ── validate ─────────────────────────────────────────────────────────────
+      - name: Terraform validate
+        run: terraform validate
+
+      # ── plan ─────────────────────────────────────────────────────────────────
+      - name: Terraform plan
+        id: plan
+        run: terraform plan -out=tfplan
+        env:
+          # pass sensitive vars via env rather than tfvars file
+          TF_VAR_run_id:              ${{ secrets.RUN_ID }}
+          TF_VAR_mlflow_tracking_uri: ${{ vars.MLFLOW_TRACKING_URI }}
+        # plan can show changes without failing — let reviewers decide
+        continue-on-error: true
+
+      # ── post plan to PR summary ───────────────────────────────────────────────
+      - name: Post plan to PR summary
+        run: |
+          echo "### Terraform Plan" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          terraform show -no-color tfplan >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      # ── fail if plan errored ──────────────────────────────────────────────────
+      - name: Check plan result
+        if: steps.plan.outcome == 'failure'
+        run: |
+          echo "Terraform plan failed — check the plan output above"
+          exit 1
