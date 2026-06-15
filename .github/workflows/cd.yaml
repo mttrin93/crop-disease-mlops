@@ -92,7 +92,7 @@ jobs:
             --query 'Configuration.LastUpdateStatus' --output text)
           while [[ "$STATE" == "InProgress" ]]; do
             echo "Lambda update in progress, waiting..."
-            sleep 5
+            sleep 60
             STATE=$(aws lambda get-function \
               --function-name ${{ vars.LAMBDA_FUNCTION }} \
               --query 'Configuration.LastUpdateStatus' --output text)

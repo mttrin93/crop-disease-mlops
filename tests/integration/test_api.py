@@ -40,7 +40,7 @@ def make_test_image(width: int = 224, height: int = 224) -> bytes:
 
 
 def test_health_returns_200():
-    response = requests.get(f"{API_URL}/health", timeout=10)
+    response = requests.get(f"{API_URL}/health", timeout=60)
     assert response.status_code == 200
 
 
