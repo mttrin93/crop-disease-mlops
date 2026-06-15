@@ -5,7 +5,7 @@
 
 [![CI Tests](https://github.com/mttrin93/crop-disease-mlops/actions/workflows/ci.yaml/badge.svg)](https://github.com/mttrin93/crop-disease-mlops/actions/workflows/ci.yaml)
 [![CI Terraform](https://github.com/mttrin93/crop-disease-mlops/actions/workflows/ci-tf.yaml/badge.svg)](https://github.com/mttrin93/crop-disease-mlops/actions/workflows/ci-tf.yaml)
-[![CD Deploy](https://github.com/mttrin93/crop-disease-mlops/actions/workflows/cd.yaml/badge.svg)](https://github.com/mttrin93/crop-disease-mlops/actions/workflows/cd.yaml)
+[![CD Deploy](https://github.com/mttrin93/crop-disease-mlops/actions/workflows/cd.yaml/badge.svg?branch=develop)](https://github.com/mttrin93/crop-disease-mlops/actions/workflows/cd.yaml)
 
 ---
 
