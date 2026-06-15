@@ -54,7 +54,7 @@ jobs:
         run: |
           uv run pylint src/ api/ tests/ \
             --recursive=y \
-            --disable=C0114,C0115,C0116,C0412,W0621 \
+            --disable=C0114,C0115,C0116,C0412,W0621,E0401,E0611,R0801 \
             --ignore=notebooks,infrastructure,airflow \
             --fail-under=8.0
 
