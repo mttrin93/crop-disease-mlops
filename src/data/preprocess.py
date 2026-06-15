@@ -352,7 +352,7 @@ def main() -> None:
 
     logger.info("Done → %s/", LOCAL_PROCESSED_DIR)
 
-    # upload to S3
+    # upload to S3 bucket
     if not args.skip_upload:
         upload_to_s3(LOCAL_PROCESSED_DIR, model_bucket, S3_PROCESSED_PREFIX)
     else:
