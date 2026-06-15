@@ -76,8 +76,7 @@ def get_db_connection():
 def ensure_tables_exist(conn) -> None:
     """Create tables if they don't exist yet."""
     with conn.cursor() as cur:
-        cur.execute(
-            """
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS predictions (
                 id               SERIAL PRIMARY KEY,
                 timestamp        TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -94,8 +93,7 @@ def ensure_tables_exist(conn) -> None:
                 share_missing_values  FLOAT,
                 window_size           INTEGER
             );
-        """
-        )
+        """)
     conn.commit()
     logger.info("Tables verified / created")
 
