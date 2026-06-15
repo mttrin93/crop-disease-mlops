@@ -75,9 +75,12 @@ jobs:
             -f api/Dockerfile .
           echo "image_uri=${{ vars.ECR_REPO_URL }}:${IMAGE_TAG::7}" >> $GITHUB_OUTPUT
 
+      - name: Set short SHA
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
       - name: Push image to ECR
         run: |
-          docker push ${{ vars.ECR_REPO_URL }}:${{ github.sha::7 }}
+          docker push ${{ vars.ECR_REPO_URL }}:${{ env.SHORT_SHA }}
           docker push ${{ vars.ECR_REPO_URL }}:latest
 
       # ── update Lambda code ────────────────────────────────────────────────────
