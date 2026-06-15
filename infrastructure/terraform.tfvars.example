@@ -2,13 +2,21 @@
 # terraform.tfvars is gitignored — never commit secrets.
 
 aws_region   = "eu-west-1"
-project_id   = "crop-disease-mlops"
 environment  = "stg"
-model_bucket = "crop-disease-models"
+project_id   = "crop-disease-mlops"
 
-# Filled in after first training run
-run_id = ""
+# S3 bucket base name — account_id is appended automatically
+model_bucket_name = "crop-disease-models-stg"
 
-# Paths to local source files (for null_resource Docker build)
-lambda_function_local_path = "../api/main.py"
+# ECR and Lambda names
+ecr_repo_name        = "crop-disease-inference"
+lambda_function_name = "crop-disease-predict"
+
+# Set after first training run
+run_id              = ""
+mlflow_tracking_uri = "http://YOUR_EC2_DNS:5000"
+mlflow_experiment_id = "1"
+
+# Paths to source files for null_resource ECR bootstrap trigger
 docker_image_local_path    = "../api/Dockerfile"
+lambda_function_local_path = "../api/main.py"

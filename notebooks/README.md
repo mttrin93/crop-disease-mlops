@@ -123,8 +123,7 @@ http://your-ec2-dns:5000
 3. Edit the configuration cell:
    ```python
    MLFLOW_TRACKING_URI = "http://your-ec2-dns:5000"
-   DATA_SOURCE = "s3"
-   S3_BUCKET = "MODEL_BUCKET"
+   S3_BUCKET = "s3-data-source"
    ```
 4. Run all cells
 

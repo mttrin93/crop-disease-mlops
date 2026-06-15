@@ -39,6 +39,7 @@ infrastructure/.terraform.lock.hcl
 infrastructure/*.tfstate
 infrastructure/*.tfstate.backup
 infrastructure/terraform.tfvars
+*.tfstate
 !infrastructure/terraform.tfvars.example
 
 # Docker

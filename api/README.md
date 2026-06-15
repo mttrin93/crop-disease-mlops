@@ -37,9 +37,11 @@ event format needed. Simpler to test with standard HTTP tools.
 docker run -p 8000:8000 \
     --entrypoint uvicorn \
     -v ~/.aws:/root/.aws:ro \
-    -e RUN_ID=31c978e10c9e440c8a82f882b6b65e9f \
+    -e RUN_ID=your-run-id \
     -e MLFLOW_TRACKING_URI=http://your-ec2-dns:5000 \
     -e AWS_DEFAULT_REGION=eu-west-1 \
+    -e MODEL_BUCKET=your-model-bucket-name \
+    -e MLFLOW_EXPERIMENT_ID=your-experiment-id \
     crop-disease-inference:latest \
     api.main:app --host 0.0.0.0 --port 8000
 ```

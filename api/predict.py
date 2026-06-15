@@ -23,7 +23,6 @@ from pathlib import Path
 
 import boto3
 import numpy as np
-import mlflow
 import onnxruntime as ort
 from PIL import Image
 
@@ -97,27 +96,41 @@ def preprocess_image(image_bytes: bytes) -> np.ndarray:
 # ---------- model loading ----------
 
 
-def _download_from_mlflow(run_id: str, dst_dir: str) -> str:
-    """Download ONNX model and metadata from MLflow artifact store."""
-    mlflow_uri = os.getenv("MLFLOW_TRACKING_URI")
-    if not mlflow_uri:
-        raise ValueError("MLFLOW_TRACKING_URI env var not set")
+def _download_from_s3(run_id: str, dst_dir: str) -> str:
+    """
+    Download full ONNX artifact folder from S3 (MLflow-style export).
+    """
+    bucket = os.getenv("MODEL_BUCKET")
+    experiment_id = os.getenv("MLFLOW_EXPERIMENT_ID", "1")
+    prefix = f"{experiment_id}/{run_id}/artifacts/onnx"
 
-    mlflow.set_tracking_uri(mlflow_uri)
-    logger.info("Downloading artifacts for run %s from MLflow...", run_id)
-    logger.info("destination folder %s", dst_dir)
+    s3 = boto3.client("s3")
 
-    # local_path = mlflow.artifacts.download_artifacts(
-    #    run_id=run_id,
-    #    artifact_path="onnx",
-    #        artifact_path="models",
-    #    dst_path=dst_dir,
-    # )
+    local_dir = Path(dst_dir) / "onnx"
+    local_dir.mkdir(parents=True, exist_ok=True)
 
-    client = mlflow.MlflowClient()
-    local_path = client.download_artifacts(run_id, "onnx", dst_dir)
+    logger.info("Downloading s3://%s -> %s", prefix, local_dir)
 
-    return local_path
+    paginator = s3.get_paginator("list_objects_v2")
+    found = False
+
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            found = True
+            key = obj["Key"]
+
+            relative_path = Path(key).relative_to(prefix)
+            target_path = local_dir / relative_path
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+
+            s3.download_file(bucket, key, str(target_path))
+
+            logger.debug("Downloaded %s", key)
+
+    if not found:
+        raise FileNotFoundError(f"No artifacts found at s3://{bucket}/{prefix}")
+
+    return str(local_dir)
 
 
 def load_model_and_metadata() -> tuple[ort.InferenceSession, dict, str]:
@@ -137,9 +150,9 @@ def load_model_and_metadata() -> tuple[ort.InferenceSession, dict, str]:
         artifact_dir = model_location
         logger.info("Loading model from local path: %s", artifact_dir)
     else:
-        # download from MLflow artifact store
+        # download from s3 artifact store
         tmp_dir = tempfile.mkdtemp(prefix="crop_disease_model_")
-        artifact_dir = _download_from_mlflow(run_id, tmp_dir)
+        artifact_dir = _download_from_s3(run_id, tmp_dir)
 
     model_path = Path(artifact_dir) / "model.onnx"
     metadata_path = Path(artifact_dir) / "metadata.json"
