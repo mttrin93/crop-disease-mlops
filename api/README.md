@@ -30,7 +30,7 @@ docker build -t crop-disease-inference:latest -f api/Dockerfile .
 
 ## Option A — FastAPI mode (recommended for local testing)
 
-Overrides the Lambda entrypoint with uvicorn — pure FastAPI, no Lambda
+Overrides the Lambda entrypoint with uvicorn: pure FastAPI, no Lambda
 event format needed. Simpler to test with standard HTTP tools.
 
 ```bash
