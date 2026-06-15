@@ -32,7 +32,7 @@ AWS infrastructure for the crop disease detection service, managed with Terrafor
 ## Step 1 — Create the Terraform state bucket (once, before init)
 
 Terraform needs an S3 bucket to store its state file. This must exist **before**
-`terraform init` — Terraform cannot create its own state storage.
+`terraform init`, Terraform cannot create its own state storage.
 
 ```bash
 aws s3 mb s3://tf-state-crop-disease-mlops-1 --region eu-west-1

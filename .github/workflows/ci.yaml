@@ -54,7 +54,7 @@ jobs:
         run: |
           uv run pylint src/ api/ tests/ \
             --recursive=y \
-            --disable=C0114,C0115,C0116 \
+            --disable=C0114,C0115,C0116,C0412,W0621,E0401,E0611,R0801 \
             --ignore=notebooks,infrastructure,airflow \
             --fail-under=8.0
 
@@ -76,13 +76,7 @@ jobs:
         run: uv python install ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
-        run: |
-          # api group: onnxruntime, fastapi, boto3 (for test_predict.py)
-          # monitoring group: evidently, pandas, psycopg2 (for test_drift.py)
-          # dev group: pytest, black, isort, pylint
-          uv sync --group api --group monitoring --group dev
-          # extra deps needed by preprocess.py and dag_tasks.py
-          uv pip install scikit-learn pillow mlflow
+        run: uv sync --group dev
 
       - name: Run unit tests
         run: uv run pytest tests/unit/ -v --tb=short

@@ -81,8 +81,7 @@ def _ensure_predictions_table() -> None:
         conn = psycopg2.connect(MONITORING_DB_URL)
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
+                cur.execute("""
                     CREATE TABLE IF NOT EXISTS predictions (
                         id             SERIAL PRIMARY KEY,
                         timestamp      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -91,8 +90,7 @@ def _ensure_predictions_table() -> None:
                         entropy        FLOAT,
                         run_id         VARCHAR(100)
                     )
-                """
-                )
+                """)
             conn.commit()
         finally:
             conn.close()

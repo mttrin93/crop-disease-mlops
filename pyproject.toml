@@ -54,3 +54,4 @@ disable = ["C0114", "C0115", "C0116", "C0412", "W0621"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+pythonpath = ["."]
