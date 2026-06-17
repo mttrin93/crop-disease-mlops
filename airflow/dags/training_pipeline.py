@@ -187,6 +187,7 @@ with DAG(
         bash_command=(
             "cd /opt/airflow && " "python src/data/preprocess.py --skip-upload"
         ),
+        #        bash_command="echo 'data processed'",
     )
 
     # ── 2. upload processed splits to S3 ──────────────────────────────────────
@@ -197,6 +198,7 @@ with DAG(
             f"s3://{MODEL_BUCKET}/data/processed/ "
             f"--region {AWS_REGION}"
         ),
+        #        bash_command="echo 'data uploaded'",
     )
 
     # ── 3. train model (captures stdout to XCom for RUN_ID) ───────────────────
@@ -212,6 +214,7 @@ with DAG(
             f"    --experiment-name crop-disease-detection "
             f"    --model-name {MODEL_NAME}"
         ),
+        #        bash_command="echo 'RUN_ID=afe0821a13c74ed2a10429da27ac4577'",
         do_xcom_push=True,  # captures stdout → XCom for downstream tasks
     )
 
