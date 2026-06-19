@@ -19,8 +19,7 @@ IMAGE_TAG         ?= latest
 
 .PHONY: install
 install:  ## Install all development dependencies
-	uv sync --group api --group monitoring --group dev
-	uv pip install scikit-learn pillow mlflow
+	uv sync --group dev
 
 .PHONY: lint
 lint:  ## Run black, isort, pylint

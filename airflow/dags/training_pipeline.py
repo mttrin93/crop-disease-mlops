@@ -23,6 +23,7 @@ Schedule: weekly (Sunday midnight)
 Manual trigger: available via Airflow UI
 """
 
+import base64
 import logging
 from datetime import datetime, timedelta
 
@@ -31,6 +32,7 @@ import mlflow
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator, BranchPythonOperator
+from airflow.providers.ssh.operators.ssh import SSHOperator
 
 from airflow import DAG
 
@@ -57,6 +59,41 @@ SSM_PARAMETER = "/crop-disease-mlops/staging/run_id"
 LAMBDA_FUNCTION = os.getenv("LAMBDA_FUNCTION", "crop-disease-predict_mlops-zoomcamp")
 F1_THRESHOLD = 0.85  # minimum test F1 to promote model to production
 
+# SSH connection ID configured in Airflow UI:
+# Admin → Connections → gpu_ec2_training
+# Host: your GPU EC2 public DNS
+# Login: ec2-user
+# Private key: contents of your .pem file
+SSH_CONN_ID = "gpu_ec2_training"
+
+# remote paths on the GPU EC2 instance
+REMOTE_REPO_DIR = "/home/ec2-user/crop-disease-mlops"
+REMOTE_DATA_DIR = "/tmp/crop_disease_data/processed"
+
+# ── training command (runs on GPU EC2 via SSH) ─────────────────────────────────
+
+TRAIN_COMMAND = f"""
+set -e
+
+# pull latest code
+cd {REMOTE_REPO_DIR}
+git pull origin develop
+
+# download processed data from S3
+mkdir -p {REMOTE_DATA_DIR}
+aws s3 sync s3://{MODEL_BUCKET}/data/processed {REMOTE_DATA_DIR} \
+    --region {AWS_REGION}
+
+# run training — prints RUN_ID=<value> to stdout on completion
+python src/model/train.py \
+    --data-dir {REMOTE_DATA_DIR} \
+    --epochs 15 \
+    --batch-size 64 \
+    --mlflow-uri {MLFLOW_TRACKING_URI} \
+    --experiment-name crop-disease-detection \
+    --model-name {MODEL_NAME} \
+    --model-bucket {MODEL_BUCKET}
+"""
 
 # ── task functions ─────────────────────────────────────────────────────────────
 
@@ -69,6 +106,12 @@ def _evaluate_threshold(**context) -> str:
     """
     ti = context["ti"]
     train_output = ti.xcom_pull(task_ids="train_model")
+
+    # SSHOperator base64-encodes stdout — decode it first
+    try:
+        train_output = base64.b64decode(train_output).decode("utf-8")
+    except Exception:
+        pass
 
     # parse RUN_ID from train.py stdout: "RUN_ID=abc123"
     run_id = None
@@ -187,7 +230,6 @@ with DAG(
         bash_command=(
             "cd /opt/airflow && " "python src/data/preprocess.py --skip-upload"
         ),
-        #        bash_command="echo 'data processed'",
     )
 
     # ── 2. upload processed splits to S3 ──────────────────────────────────────
@@ -198,24 +240,43 @@ with DAG(
             f"s3://{MODEL_BUCKET}/data/processed/ "
             f"--region {AWS_REGION}"
         ),
-        #        bash_command="echo 'data uploaded'",
     )
 
-    # ── 3. train model (captures stdout to XCom for RUN_ID) ───────────────────
-    train_model = BashOperator(
+    #    # ── 3. train model (captures stdout to XCom for RUN_ID) ───────────────────
+    #    train_model = BashOperator(
+    #        task_id="train_model",
+    #        bash_command=(
+    #            "cd /opt/airflow && "
+    #            "python src/model/train.py "
+    #            f"    --data-dir data/processed "
+    #            f"    --epochs 15 "
+    #            f"    --batch-size 64 "
+    #            f"    --mlflow-uri {MLFLOW_TRACKING_URI} "
+    #            f"    --experiment-name crop-disease-detection "
+    #            f"    --model-name {MODEL_NAME}"
+    #        ),
+    #        #        bash_command="echo 'RUN_ID=afe0821a13c74ed2a10429da27ac4577'",
+    #        do_xcom_push=True,  # captures stdout → XCom for downstream tasks
+    #    )
+
+    # ── 3. train model on GPU EC2 via SSH ─────────────────────────────────────
+    #
+    # SSHOperator connects to the GPU EC2 instance and runs the training
+    # command remotely. Airflow captures stdout via XCom to extract RUN_ID.
+    #
+    # The EC2 instance must be:
+    #   - running (start it before triggering the DAG)
+    #   - configured with the repo cloned and training env installed
+    #     (see infrastructure/scripts/setup_training_ec2.sh)
+    #   - configured as an Airflow SSH connection (gpu_ec2_training)
+    #
+    train_model = SSHOperator(
         task_id="train_model",
-        bash_command=(
-            "cd /opt/airflow && "
-            "python src/model/train.py "
-            f"    --data-dir data/processed "
-            f"    --epochs 15 "
-            f"    --batch-size 64 "
-            f"    --mlflow-uri {MLFLOW_TRACKING_URI} "
-            f"    --experiment-name crop-disease-detection "
-            f"    --model-name {MODEL_NAME}"
-        ),
-        #        bash_command="echo 'RUN_ID=afe0821a13c74ed2a10429da27ac4577'",
-        do_xcom_push=True,  # captures stdout → XCom for downstream tasks
+        ssh_conn_id=SSH_CONN_ID,
+        command=TRAIN_COMMAND,
+        do_xcom_push=True,  # captures stdout → XCom (contains RUN_ID=...)
+        cmd_timeout=7200,  # 2 hours max for training
+        get_pty=True,  # allocate pseudo-terminal for better output
     )
 
     # ── 4. check if model meets F1 threshold ──────────────────────────────────

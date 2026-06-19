@@ -1,6 +1,18 @@
 # Airflow local development stack
 # Start with: docker compose -f airflow/docker-compose.yaml up
 # Access UI at: http://localhost:8081 (admin / admin)
+#
+# Required files before starting:
+#   airflow/keys/training_key.pem   ← PEM key for the training EC2 instance
+#   airflow/.env                    ← environment variables (see below)
+#
+# Required airflow/.env variables:
+#   AIRFLOW_UID=$(id -u)
+#   TRAINING_EC2_DNS=ec2-xx-xx-xx-xx.eu-west-1.compute.amazonaws.com
+#   MLFLOW_TRACKING_URI=http://your-ec2:5000
+#   MODEL_BUCKET=crop-disease-models-mlflow-stg-478544568263
+#   AWS_DEFAULT_REGION=eu-west-1
+#   LAMBDA_FUNCTION=crop-disease-predict_crop-disease-mlops
 
 #version: '3.8'
 
@@ -20,12 +32,22 @@ x-airflow-common:
     MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://localhost:5000}
     MODEL_BUCKET: ${MODEL_BUCKET:-crop-disease-models-stg-478544568263}
     AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
+    LAMBDA_FUNCTION: ${LAMBDA_FUNCTION:-crop-disease-predict_crop-disease-mlops}
+    AIRFLOW_CONN_GPU_EC2_TRAINING: >-
+      {"conn_type": "ssh",
+       "host": "${TRAINING_EC2_DNS:-localhost}",
+       "login": "ec2-user",
+       "port": 22,
+       "extra": {"key_file": "/opt/airflow/keys/training_key.pem",
+                 "no_host_key_check": true}}
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
     - ../src:/opt/airflow/src         # training + monitoring scripts
     - ~/.aws:/root/.aws:ro            # AWS credentials
     - ../data:/opt/airflow/data       # bind mount for the data
+    - ./keys:/opt/airflow/keys:ro         # SSH keys for GPU EC2
   depends_on:
     postgres:
       condition: service_healthy
@@ -47,7 +69,7 @@ services:
 
   airflow-init:
     <<: *airflow-common
-    command: bash -c "pip install mlflow boto3 scikit-learn evidently psycopg2-binary && airflow db migrate && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com"
+    command: bash -c "pip install apache-airflow-providers-ssh mlflow boto3 scikit-learn evidently psycopg2-binary && airflow db migrate && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com"
     restart: on-failure
 
   airflow-webserver:
