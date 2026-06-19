@@ -3,7 +3,7 @@
 This guide documents how to run the Airflow orchestration stack locally.
 Airflow manages two DAGs:
 
-- **`crop_disease_training_pipeline`** — weekly: preprocess → train → evaluate → deploy
+- **`crop_disease_training_pipeline`** — weekly: preprocess → upload to S3 → train on EC2 → evaluate → deploy
 - **`crop_disease_monitoring`** — daily: compute drift metrics → trigger retraining if needed
 
 ---
@@ -13,7 +13,9 @@ Airflow manages two DAGs:
 - Docker and Docker Compose installed
 - AWS CLI configured (`aws configure`)
 - MLflow server running on EC2 (see `notebooks/README.md`)
-- Processed data in S3 (see Step 2)
+- PEM key for the training EC2 instance
+- Training EC2 instance set up (see `airflow/setup_training_ec2.sh`)
+- Processed data in S3
 
 ---
 
@@ -22,7 +24,9 @@ Airflow manages two DAGs:
 ```
 airflow/
 ├── docker-compose.yaml       ← Airflow stack (scheduler + webserver + postgres)
-├── .env                      ← auto-generated, contains AIRFLOW_UID
+├── .env                      ← auto-generated, contains AIRFLOW_UID + connection vars
+├── keys/
+│   └── training_key.pem   ← PEM key for training EC2 (gitignored)
 ├── dags/
 │   ├── training_pipeline.py  ← weekly training DAG
 │   ├── monitoring_dag.py     ← daily monitoring DAG
@@ -35,36 +39,44 @@ airflow/
 
 ## First-time setup
 
-### 1. Create required directories
+### 0. Set up the training EC2 instance
 
-Docker may create `logs/` with root ownership on first run causing permission
-errors. Always create it manually before starting:
+Copy the setup script to EC2 and run it:
+```bash
+scp -i your-key.pem infrastructure/scripts/setup_training_ec2.sh \
+    ec2-user@YOUR_EC2_DNS:~/
+
+ssh -i your-key.pem ec2-user@YOUR_EC2_DNS
+bash setup_training_ec2.sh
+```
+
+### 1. Copy the training EC2 key
+
+```bash
+mkdir -p airflow/keys
+cp /path/to/your-training-key.pem airflow/keys/training_key.pem
+chmod 400 airflow/keys/training_key.pem
+```
+
+### 2. Create required directories
 
 ```bash
 sudo rm -rf airflow/logs airflow/plugins   # remove if already created by Docker
 mkdir -p airflow/logs airflow/plugins
 ```
 
-### 2. Create the .env file
-
-Airflow runs as a non-root user inside the container. This sets the container
-user ID to match your host user so it can write to mounted directories:
+### 3. Create the .env file
 
 ```bash
 echo "AIRFLOW_UID=$(id -u)" > airflow/.env
+echo "TRAINING_EC2_DNS=ec2-xx-xx-xx-xx.eu-west-1.compute.amazonaws.com" >> airflow/.env
+echo "MLFLOW_TRACKING_URI=http://ec2-52-211-42-124.eu-west-1.compute.amazonaws.com:5000" >> airflow/.env
+echo "MODEL_BUCKET=crop-disease-models-mlflow-stg-478544568263" >> airflow/.env
+echo "AWS_DEFAULT_REGION=eu-west-1" >> airflow/.env
+echo "LAMBDA_FUNCTION=crop-disease-predict_crop-disease-mlops" >> airflow/.env
 ```
 
-### 3. Set environment variables
-
-Copy `.env.example` to `.env` in the project root and fill in your values,
-or export them in your shell before starting Airflow:
-
-```bash
-export MLFLOW_TRACKING_URI=...
-export MODEL_BUCKET=...
-export AWS_DEFAULT_REGION=...
-export LAMBDA_FUNCTION=...
-```
+Replace `TRAINING_EC2_DNS` with your actual training EC2 public DNS.
 
 ### 4. Initialise the database (first time only)
 
@@ -72,7 +84,12 @@ export LAMBDA_FUNCTION=...
 docker compose -f airflow/docker-compose.yaml up airflow-init
 ```
 
-Wait until you see `airflow-init-1 exited with code 0` before proceeding.
+Wait until you see `airflow-init-1 exited with code 0`.
+
+This step automatically:
+- Installs `apache-airflow-providers-ssh` and other dependencies
+- Creates the admin user (admin/admin)
+- Registers the SSH connection for the training EC2 via the `AIRFLOW_CONN_GPU_EC2_TRAINING` env var — no manual UI setup needed
 
 ---
 
@@ -84,8 +101,15 @@ docker compose -f airflow/docker-compose.yaml up
 
 Open the UI at **http://localhost:8081** and log in with `admin` / `admin`.
 
-The scheduler automatically picks up any `.py` file in `airflow/dags/` that
-contains a `DAG` object. Both DAGs will appear in the UI within 30 seconds.
+### 5. Verify SSH connection to training EC2
+
+```bash
+docker exec -it airflow-airflow-scheduler-1 \
+    ssh -i /opt/airflow/keys/training_key.pem \
+    -o StrictHostKeyChecking=no \
+    ec2-user@YOUR_TRAINING_EC2_DNS \
+    "echo 'SSH connection works'"
+```
 
 ---
 
@@ -95,8 +119,7 @@ contains a `DAG` object. Both DAGs will appear in the UI within 30 seconds.
 docker compose -f airflow/docker-compose.yaml down
 ```
 
-To also remove the database volume (full reset):
-
+Full reset (removes database):
 ```bash
 docker compose -f airflow/docker-compose.yaml down -v
 ```
@@ -116,11 +139,11 @@ docker compose -f airflow/docker-compose.yaml down -v
 
 ```bash
 # training pipeline
-docker compose -f airflow/docker-compose.yaml exec airflow-scheduler \
+docker-compose -f airflow/docker-compose.yaml exec airflow-scheduler \
     airflow dags trigger crop_disease_training_pipeline
 
 # monitoring
-docker compose -f airflow/docker-compose.yaml exec airflow-scheduler \
+docker-compose -f airflow/docker-compose.yaml exec airflow-scheduler \
     airflow dags trigger crop_disease_monitoring
 ```
 
@@ -136,19 +159,20 @@ docker compose -f airflow/docker-compose.yaml exec airflow-scheduler \
 ## DAG: training_pipeline
 
 ```
-preprocess_data
+preprocess_data          ← runs locally in Airflow container
       │
-upload_data_to_s3
+upload_data_to_s3        ← syncs data/processed/ to S3
       │
-  train_model          ← runs src/model/train.py, captures RUN_ID from stdout
+  train_model            ← SSHOperator → training EC2
+      │                    runs src/model/train.py, prints RUN_ID to stdout
       │
-evaluate_threshold     ← checks test_f1 ≥ 0.85
+evaluate_threshold       ← checks test_f1 ≥ 0.85 in MLflow
     /       \
 register   notify_low_performance
     │
-update_ssm             ← writes RUN_ID to /crop-disease-mlops/staging/run_id
+update_ssm               ← writes RUN_ID to SSM Parameter Store
     │
-deploy_lambda          ← updates Lambda env vars with new RUN_ID
+deploy_lambda            ← updates Lambda env vars with new RUN_ID
     │
    end
 ```
@@ -215,17 +239,3 @@ pytest tests/unit/test_training_dag.py -v
 | `train_model` task fails | Check that `src/model/train.py` runs locally first |
 | SSM update fails | Check EC2 IAM role has `ssm:PutParameter` permission |
 | Lambda deploy fails | Check IAM role has `lambda:UpdateFunctionConfiguration` permission |
-
----
-
-## Cost management
-
-Airflow runs entirely locally (Docker) — no AWS charges for the orchestration
-itself. Charges only occur when DAG tasks interact with AWS:
-
-- **S3 sync** — minimal (~$0.005 per GB)
-- **EC2 training** — ~$0.53/hour while `train_model` task runs
-- **Lambda update** — free (configuration change only)
-- **SSM** — free tier covers standard parameters
-
-Stop EC2 and RDS after training to avoid idle charges.

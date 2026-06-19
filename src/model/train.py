@@ -282,6 +282,7 @@ class _ArtifactContext:  # pylint: disable=too-few-public-methods,too-many-insta
         model_name: str,
         class_names: list[str] | None = None,
         model_bucket: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         self.test_loader = test_loader
         self.criterion = criterion
@@ -291,6 +292,7 @@ class _ArtifactContext:  # pylint: disable=too-few-public-methods,too-many-insta
         self.model_name = model_name
         self.class_names = class_names or []
         self.model_bucket = model_bucket
+        self.run_id = run_id
 
 
 def _make_optimizer(
@@ -347,6 +349,55 @@ def _run_epoch(
     return train_loss, train_acc, val_loss, val_acc, val_f1
 
 
+def _s3_copy_prefix(
+    s3_client: boto3.client, bucket: str, src_prefix: str, dst_prefix: str
+) -> int:
+    """Copy all S3 objects from src_prefix to dst_prefix. Returns count of copied files."""
+    paginator = s3_client.get_paginator("list_objects_v2")
+    copied = 0
+    for page in paginator.paginate(Bucket=bucket, Prefix=src_prefix):
+        for obj in page.get("Contents", []):
+            src_key = obj["Key"]
+            dst_key = src_key.replace(src_prefix, dst_prefix, 1)
+            s3_client.copy_object(
+                Bucket=bucket,
+                CopySource={"Bucket": bucket, "Key": src_key},
+                Key=dst_key,
+            )
+            logger.info("Copied → %s", dst_key)
+            copied += 1
+    return copied
+
+
+def _copy_onnx_to_artifact_path(run_id: str, model_name: str) -> None:
+    """
+    Copy ONNX artifacts from MLflow model registry path to run artifact path.
+    """
+    client = mlflow.tracking.MlflowClient()
+
+    versions = client.search_model_versions(f"name='{model_name}'")
+    if not versions:
+        raise ValueError(f"No registered versions found for model {model_name}")
+    latest = sorted(versions, key=lambda v: int(v.version))[-1]
+
+    run = mlflow.get_run(run_id)
+    artifact_uri = run.info.artifact_uri
+    bucket = artifact_uri.replace("s3://", "").split("/")[0]
+
+    dst_prefix = f"{artifact_uri.replace('s3://', '').split('/', 1)[1]}/onnx"
+    src_prefix = (
+        f"{run.info.experiment_id}/models/{latest.source.split('/')[1]}/artifacts"
+    )
+
+    logger.info("Copying ONNX artifacts %s → %s", src_prefix, dst_prefix)
+    copied = _s3_copy_prefix(boto3.client("s3"), bucket, src_prefix, dst_prefix)
+
+    if copied == 0:
+        logger.warning("No files found at %s - skipping copy", src_prefix)
+    else:
+        logger.info("Copied %d files to %s", copied, dst_prefix)
+
+
 def _log_and_register(model: nn.Module, ctx: _ArtifactContext) -> None:
     """Evaluate on test set, export ONNX, log and register in MLflow."""
     model.load_state_dict(torch.load(ctx.best_ckpt, map_location=DEVICE))
@@ -358,15 +409,21 @@ def _log_and_register(model: nn.Module, ctx: _ArtifactContext) -> None:
 
     onnx_path = str(ctx.output_dir / "model.onnx")
     export_onnx(model, onnx_path)
-    onnx_model = onnx.load(onnx_path)
-    mlflow.onnx.log_model(onnx_model=onnx_model, artifact_path="onnx")
-    mlflow.log_artifact(str(ctx.data_dir / "metadata.json"), artifact_path="onnx")
 
     mlflow.pytorch.log_model(
         pytorch_model=model,
         artifact_path="model",
         registered_model_name=ctx.model_name,
     )
+
+    onnx_model = onnx.load(onnx_path)
+    mlflow.onnx.log_model(
+        onnx_model=onnx_model,
+        artifact_path="onnx",
+        registered_model_name=ctx.model_name,
+    )
+    mlflow.log_artifact(str(ctx.data_dir / "metadata.json"), artifact_path="onnx")
+    _copy_onnx_to_artifact_path(run_id=ctx.run_id, model_name=ctx.model_name)
 
     # generate and upload reference data for Evidently monitoring
     if ctx.class_names:
@@ -512,6 +569,7 @@ def main() -> None:  # pylint: disable=too-many-locals
             model_name=args.model_name,
             class_names=metadata["class_names"],
             model_bucket=args.model_bucket,
+            run_id=run_id,
         )
         _run_training_loop(
             model, epoch_ctx, artifact_ctx, args.epochs, args.early_stop_patience
